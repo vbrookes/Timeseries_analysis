@@ -1,0 +1,745 @@
+---
+title: "Demostration code: Parvovirus time-series analysis in R"
+author: 'V Brookes, M Ward, R Iglesias'
+date: "24 October 2019"
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+  pdf_document: 
+    fig_crop: no
+    fig_width: 7
+    highlight: haddock
+    number_sections: yes
+    toc: yes
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pagebreak <- function() {
+  if(knitr::is_latex_output())
+    return("\\newpage")
+  else
+    return('<div style="page-break-before: always;" />')
+}
+
+```
+
+
+`r pagebreak()`
+
+# Time-series analysis of the parvovirus dataset
+
+First, load the required packages (libraries).
+
+To manipulate and plot the data:
+
+```{r wrap-hook, messages = FALSE}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(lubridate)
+```
+
+To conduct time-series analyses and read the data from github:
+
+```{r}
+library(tseries)
+library(vars)
+library(forecast)
+library(RCurl)
+```
+
+Now load the parvo dataset, and inspect it using the `summary`, `str`, `head` and `tail` functions:
+
+```{r}
+dataSource_CPV = getURL("https://raw.githubusercontent.com/vbrookes/Timeseries_analysis/master/Parvo_TS_clean.csv")
+ParvoD <- read.csv(text = dataSource_CPV, header = T)
+summary(ParvoD)
+str(ParvoD)
+head(ParvoD)
+tail(ParvoD)
+
+```
+
+Check for duplicated or missing data:
+
+```{r}
+## Duplication
+which(duplicated(ParvoD))  # anyDuplicated() does the same thing 
+AllCompleteData = unique(ParvoD) # Can check that the dataset is the same length
+
+#missing values in entire data set
+ParvoD$complete<-complete.cases(ParvoD) # shows you if there are missing values in the row. If row is complete=TRUE
+length(ParvoD$complete)
+missingData <- ParvoD[which(ParvoD$complete == "FALSE"),]
+missingData
+
+```
+
+Re-check your data, for example:
+How many observations are there?
+What are the data types of each column? Are they suitable for analysis?
+
+Note that the column 'Case.Date' is a factor. 
+
+Convert it to date format, and find the minumum and maximum dates in the dataset. Also, add columns for week and month for aggregation purposes later in analysis:
+
+```{r}
+length(ParvoD$complete) # total events
+str(ParvoD)
+
+sum(ParvoD$Cases) # total cases
+sum(ParvoD$Events) # total events
+
+## Save Case.Date to Date in a new column, with as.Date format
+ParvoD$Date = as.Date(ParvoD$Case.Date, "%d/%m/%Y")
+
+## Remove rows with no date (this should also have been detected in the previous chunk of code).
+ParvoD <- subset(ParvoD,!(is.na(ParvoD["Date"]) ))
+
+## Add columns that are by week or month
+ParvoD$byWeek = cut(ParvoD$Date, breaks="1 week") 
+ParvoD$byMonth = cut(ParvoD$Date, breaks="1 month") 
+
+## find the minimum and maximum dates of observations
+min(ParvoD$Date, na.rm = T)
+max(ParvoD$Date, na.rm = T)
+
+```
+
+Summarise dataset by week and month, using `ddply` from the `plyr` package:
+
+```{r}
+#### Aggregate data by week
+ParvoW = ddply(ParvoD, c("byWeek"), summarise,
+                     Cases = sum(Cases),
+                     Events = sum(Events))
+ParvoW$byWeek <-  as.Date(ParvoW$byWeek, format = "%Y-%m-%d")
+str(ParvoW)
+summary(ParvoW)
+
+ParvoM = ddply(ParvoD, c("byMonth"), summarise,
+                     Cases = sum(Cases),
+                     Events = sum(Events))
+ParvoM$byMonth <-  as.Date(ParvoM$byMonth, format = "%Y-%m-%d")
+str(ParvoM)
+summary(ParvoM)
+
+```
+
+Now create a dummy time-series of weeks based on these time periods and merge with the time-series. This identifies weeks (or months) with no cases. Note that some time-series have many zero values at the time points.
+
+```{r}
+# Create time sequence with 1 week intervals
+data.length <- length(ParvoW$byWeek)
+min.date = min(ParvoW$byWeek)
+max.date = max(ParvoW$byWeek)
+
+# Check length
+length(ParvoW$Events)
+
+all.dates <- seq(min.date, max.date, by="week")
+all.dates.frame <- data.frame(list(byWeek=all.dates))  # Make it into a data frame so that we can merge it 
+
+# Merge data with weekly Parvo data
+ParvoW <- merge(all.dates.frame, ParvoW, all = T)
+# Change NAs to 0
+ParvoW$Cases[is.na(ParvoW$Cases)] <- 0
+ParvoW$Events[is.na(ParvoW$Events)] <- 0
+
+# summary
+summary(ParvoW)
+# check structure
+str(ParvoW)
+# Check length
+length(ParvoW$Events) # Note that in this dataset, there must be 2 weeks with 0 cases (because this is two weeks longer).
+
+```
+
+We can also create a monthly times-series.
+
+```{r}
+# Create time sequence with 1 month intervals
+data.lengthM <- length(ParvoM$byMonth)
+min.dateM = min(ParvoM$byMonth)
+max.dateM = max(ParvoM$byMonth)
+
+# Check length
+length(ParvoM$Cases)
+
+all.dates <- seq(min.dateM, max.dateM, by="month")
+all.dates.frame <- data.frame(list(byMonth=all.dates))  # Make it into a data frame so that we can merge it 
+
+# Merge data with monthly Parvo data
+ParvoM <- merge(all.dates.frame, ParvoM, all = T)
+# Change NAs to 0
+ParvoM$Cases[which(is.na(ParvoM$Cases))] <- 0
+ParvoM$Events[which(is.na(ParvoM$Events))] <- 0
+
+# summary
+summary(ParvoM)
+# check structure
+str(ParvoM)
+write.csv(ParvoM, 'D:/Users/vbrookes/Dropbox (Sydney Uni)/Parvo_timeseries/Parvo_Month.csv')
+# Check length
+length(ParvoM$Events) 
+
+```
+
+`r pagebreak()`
+
+
+## Exploratory analysis
+
+### Plot the weekly time-series
+
+Here, we use `ggplot`. 
+The following code is used to make the plots attractive and is a useful 'publication-ready' theme:
+
+```{r}
+themeVB = theme(axis.text.x = element_text(colour = "black", angle = 90, hjust=1,vjust=0.5, size = 11), 
+                axis.line = element_line(colour = "black"), 
+                axis.text.y = element_text(colour = "black"),
+                axis.ticks = element_line(colour = "black"),
+                axis.title.y = element_text(vjust=1.5),
+                panel.grid.major = element_line(colour = "grey93"),
+                panel.grid.minor = element_line(colour = "white"),
+                panel.background = element_blank(),
+                legend.background = element_rect(colour = NA), 
+                legend.key = element_rect(fill = 'transparent'))
+
+```
+
+The blue line is the smoothed number of cases with a shaded 95% confidence interval. You can change the smoothing method (here, we have used 'auto').
+
+There seems to be an overall decreasing trend in the number of weekly reported cases. Seasonality is also possible but difficult to determine using this plot.
+
+```{r}
+ggplot(ParvoW, aes(x = byWeek, y = Events, group = 1)) +
+  geom_bar(stat="identity", width = 0.5, colour = "black") +
+  stat_smooth(aes(y = Events), method='auto', level=0.95) + 
+  themeVB +
+  scale_x_date() +
+  xlab("Year") +
+  ylab("Cases") 
+
+ggplot(ParvoM, aes(x = byMonth, y = Events, group = 1)) +
+  geom_bar(stat="identity", width = 0.5, colour = "black") +
+  stat_smooth(aes(y = Events), method='auto', level=0.95) + 
+  themeVB +
+  scale_x_date() +
+  xlab("Year") +
+  ylab("Cases") 
+
+```
+
+
+### Convert the data to an R recognised time-series 
+
+Here, we use the `ts` function from the stats package. 
+
+`frequency = 52` is specified because there are 52 weeks (sort of) in a year.
+
+
+```{r}
+Parvo_ts_data <- ts(ParvoW$Events, start = c(2009, 40), frequency =52)
+
+Parvo_ts_dataM <- ts(ParvoM$Events, start = c(2009, 10), frequency =12)
+
+```
+
+
+There are a decreasing number of events over time.
+
+We can quantify this trend using linear regression with predictor variables for trend (by week or month per year) and seasonality (week or month) 
+
+The weekly change in the number of cases is -1.22 events/week/year (95% CI -1.57 - -0.87), confirming that the long-term trend is decreasing reported cases.
+
+```{r}
+# Weekly ts dataset
+fit_Parvo_data = ts_all_model <- lm(Parvo_ts_data ~ time(Parvo_ts_data) + factor(cycle(Parvo_ts_data)))
+summary(fit_Parvo_data)
+confint(fit_Parvo_data)
+
+# Monthly ts dataset
+fit_Parvo_dataM = ts_all_model <- lm(Parvo_ts_dataM ~ time(Parvo_ts_dataM) + factor(cycle(Parvo_ts_dataM)))
+summary(fit_Parvo_dataM)
+confint(fit_Parvo_dataM)
+
+```
+
+### Decompose the time-series
+The observed data is composed of trend, cycle, seasonal and random variation. 
+
+The function `decompose` is from the base package `stats`, and uses moving averages to smooth the time-series. We also demonstrate the function 'stl' from the stats package which uses loess smoothing.
+
+The data are illustrated as follows:
+
+Observed - the actual data.
+
+Trend - the overall upward or downward movement of the data points. It is not necessarily linear.
+
+Seasonal - any monthly/yearly pattern of the data points.
+
+Random (remainder) - unexplainable part of the data.
+
+
+```{r}
+# Weekly ts dataset
+Decompose_ts <- decompose(Parvo_ts_data)
+summary(Decompose_ts)
+plot(Decompose_ts)
+
+plot(Decompose_ts$trend + Decompose_ts$random, ylab = "trend + random components")  # can also plot combinations
+
+Decompose_ts_loess <- stl(Parvo_ts_data, s.window="periodic")
+plot(Decompose_ts_loess)
+
+# Monthly ts dataset
+Decompose_tsM <- decompose(Parvo_ts_dataM)
+summary(Decompose_tsM)
+plot(Decompose_tsM)
+
+Decompose_ts_loessM <- stl(Parvo_ts_dataM, s.window="periodic")
+plot(Decompose_ts_loessM)
+
+## There looks like seasonality. Add a week and month column to ParvoW to investigate further
+ParvoW$Year = year(ParvoW$byWeek)
+ParvoW$Week = week(ParvoW$byWeek)
+ParvoW$Month = month(ParvoW$byWeek)
+
+ggplot(ParvoW, aes(y=Events, x = Week)) + geom_boxplot(aes(group=Week), fill = 'grey90') + themeVB 
+ggplot(ParvoW, aes(y=Events, x = Month)) + geom_boxplot(aes(group=Month), fill = 'grey90') + themeVB 
+ggplot(ParvoW, aes(y=Events, x = Year)) + geom_boxplot(aes(group=Year), fill = 'grey90') + themeVB 
+```
+
+Given the apparent seasonality in both the weekly and monthly time-series, it is interesting to visually compare the two seasonal plots from the 'decomposed' data.
+
+```{r}
+### Compare the seasonality plots
+
+plot(Decompose_tsM$seasonal) 
+lines(Decompose_ts$seasonal, col = 'red') 
+
+```
+
+# Time-series analysis using autoregressive models
+In this example, we fit an ARIMA model. ARIMA is an abbreviation for 'AutoRegressive Integrated Moving Average'. 
+
+Auto Regressive (AR) terms refer to the number of lagged values in the model. In the non-seasonal part of the model, the order of lagged values is termed 'p', and in the seasonal part of the model the order of lagged values is termed 'P'.
+
+Moving Average (MA) terms refer to the number of lagged errors in the model. In the non-seasonal part of the model, the order of lagged errors is termed 'q', and in the seasonal part of the model the order of lagged errors is termed 'Q'. 
+
+Integration (I) terms refer to the number of difference used to make the time series stationary. In the non-seasonal part of the model, the order of differences is termed 'd', and in the seasonal part of the model the order of differences is termed 'D'.
+
+Overall, the model includes the following variables:
+
+ARIMA: (p, d, q) (P, D, Q)m
+
+where m refers to the number of observations in a seasonal cycle.
+
+#### Assumptions of ARIMA models 
+Data should be stationary - this means that the properties of the series do not depend on the time when it is captured, i.e. trend and seasonality are removed to leave 'white-noise'. 
+Note that a series with cyclic behaviour can also be considered stationary because cyclic behaviours have unpredictable wavelengths. A stationary series will have constant variance (see below)
+
+#### Steps to be followed for ARIMA modeling:
+
+1. Exploratory analysis - to determine values for (p, d, q) (P, D, Q)m
+2. Fit the model
+3. Diagnostic measures to assess model fit
+
+
+## 1. Exploratory analysis for ARIMA modelling
+We start by assessing the need for differencing to determine values for d and D.
+
+### Tests for stationarity (is there a need to 'first difference' the data?)
+
+It is important that the data to which the ARIMA model is fitted are stationary. Observations in a non-stationary time-series demonstrate structure that is dependent on the time index. Inducing stationarity means removing trend, seasonality and possibly cyclicity (if it is predictable). 
+
+There are several methods to check for stationarity:
+
+1. View plots of time-series for obvious trend, or examine the autocorrelation function (ACF) plots. There should be little autocorrelation in stationary data, so an ACF plot should decrease to zero rapidly, and stay at zero.
+
+2. Summary statistics
+Check for significant differences in mean and variance between sections of data. We do not demonstrate this in the current study because these are starighforward statistical tests.
+
+3. Statistical tests
+These tests determine whether the expectations of stationarity are met or violated. 
+
+In our example dataset, we initially re-examine the time series and examine an ACF plot of the weekly and monthly events. We observe decreasing trend and  the ACF plot demonstrates that there is autocorrelation for 10 and 2 lags in the weekly and monthly series, respectively. These time-series are not stationary. 
+
+We then run `ndiffs` from the `forecast` package to assess how many first differences are needed to induce stationarity. `ndiffs` suggests 1 first difference for each time series. After differencing the data, the time-series plots appears level (no trend) and the ACF plots show limited autocorrelation (one lag) in the first few lags.
+
+
+```{r}
+## Tests for stationarity
+# Weekly data
+Parvo_ts_data %>% ggtsdisplay(theme = themeVB)
+
+ndiffs(Parvo_ts_data) # 1 difference estimated to induce stationarity
+nsdiffs(Parvo_ts_data) # No differencing required to induce stationarity
+
+Parvo_ts_data %>% diff() %>% ggtsdisplay(theme = themeVB) # Assess differenced ts and ACF and PACF plots.
+
+# Monthly data
+Parvo_ts_dataM %>% ggtsdisplay(theme = themeVB)
+
+ndiffs(Parvo_ts_dataM) # 1 difference estimated to induce stationarity
+nsdiffs(Parvo_ts_dataM) # No differencing required to induce stationarity
+
+Parvo_ts_dataM %>% diff() %>% ggtsdisplay(theme = themeVB) # Assess differenced ts and ACF and PACF plots.
+
+```
+
+We further check for stationarity in the time-series using statisical tests. [This website](https://rpubs.com/richkt/269797) is a useful resource.
+
+Frequently used tests include:
+
+1. Ljung-Box test for independence (Null hypothesis = time independance in a given period of lags. A low P value suggests that the data are not consistent with independance)
+2. Augmented Dickey-Fuller (ADF) t-statistic test for unit root (note that a series with a trend line will have a unit root and result in a large P value, i.e. the null hypothesis is that there is a unit root present.)
+3. Kwiatkowski-Phillips-Schmidt-Shin (KPSS) for level or trend stationarity (null hypothesis is that the time-series is stationary).
+
+```{r}
+## Weekly time-series tests for stationarity
+# 1. 
+Box.test(Parvo_ts_data, lag = 52, type="Ljung-Box") 
+
+# 2.
+adf.test(Parvo_ts_data, alternative = "stationary", k = 104) 
+
+# 3.
+kpss.test(Parvo_ts_data, null = 'Trend') # The null hypothesis is a time trend with stationary error.
+kpss.test(Parvo_ts_data, null = 'Level') # The null hypothesis is that the series is white noise.
+
+## Monthly time-series tests for stationarity
+# 1. 
+Box.test(Parvo_ts_dataM, lag = 12, type="Ljung-Box") 
+
+# 2.
+adf.test(Parvo_ts_dataM, alternative = "stationary", k = 24) 
+
+# 3.
+kpss.test(Parvo_ts_dataM, null = 'Trend') # The null hypothesis is a time trend with stationary error.
+kpss.test(Parvo_ts_dataM, null = 'Level') # The null hypothesis is that the series is white noise.
+
+```
+
+
+We difference the time-series, then test for stationarity again.
+
+```{r}
+## Weekly time-series tests for stationarity
+# 1. 
+Box.test(diff(Parvo_ts_data), lag=52, type="Ljung-Box") 
+
+# 2.
+adf.test(diff(Parvo_ts_data), alternative = "stationary", k = 104) 
+
+# 3.
+kpss.test(diff(Parvo_ts_data), null = 'Trend') # The null hypothesis is a time trend with stationary error.
+kpss.test(diff(Parvo_ts_data), null = 'Level') # The null hypothesis is that the series is white noise.
+
+## Monthly time-series tests for stationarity
+# 1. 
+Box.test(diff(Parvo_ts_dataM), lag=12, type="Ljung-Box") 
+
+# 2.
+adf.test(diff(Parvo_ts_dataM), alternative = "stationary", k = 24) 
+
+# 3.
+kpss.test(diff(Parvo_ts_dataM), null = 'Trend') # The null hypothesis is a time trend with stationary error.
+kpss.test(diff(Parvo_ts_dataM), null = 'Level') # The null hypothesis is that the series is white noise.
+
+```
+
+### Interpreting ACF and PACF plots to determine p, d, P and D.
+
+From our tests of stationarity, we know that 'd' in the non-seasonal part of the ARIMA model is likely to be 1, and 'D' in the seasonal part of the model is likely to be zero. 
+
+We now use the ACF and PACF plots of the differenced data to estimate the p and q values in the non-seasonal section of the ARIMA model.
+
+```{r}
+## Examine ACF and PACF plots of differenced time-series again to estimate p, P, q and Q.
+# Weekly data
+Parvo_ts_data %>% diff() %>% ggtsdisplay(theme = themeVB) # Assess differenced ts and ACF and PACF plots.
+
+# Monthly data
+Parvo_ts_dataM %>% diff() %>% ggtsdisplay(theme = themeVB) # Assess differenced ts and ACF and PACF plots.
+
+```
+
+The ACF plot of the weekly time series has a fast initial decay with only the first lag significant. This indicates MA(1) for the weekly ARIMA model. The ACF plot of the monthly time series has limited autocorrelation at 2 lags. This could indicate AR(0-2) for the monthly ARIMA model.
+
+
+The PACF plot for the weekly data has a fast decay with significant partial autocorrelation in the first two lags significant. This suggests AR(2).
+The PACF plot for the monthly data limited partial autocorrelation  significant. This suggests AR(0-2) for the monthly ARIMA model.
+
+
+[Click here for more information about selected parameters for ARIMA models...](https://rpubs.com/riazakhan94/arima_with_example)
+
+[...and here.](https://support.minitab.com/en-us/minitab/18/help-and-how-to/modeling-statistics/time-series/how-to/partial-autocorrelation/interpret-the-results/partial-autocorrelation-function-pacf/)
+
+For seasonality, there are spikes in the weekly ACF at approximately 2 years, indicating MA(1-3). There are 3 spikes around 6 months in the PACF, indicating AR(1-3).
+
+For seasonality in the monthly data, there are consistent spikes at 6 months, suggesting MA(2), and limted spikes in the PACF, suggesting AR(0-1).
+
+
+## 2. Fit an ARIMA model
+
+An ARIMA model with a seasonal component can be called a SARIMA model.
+
+Based on exploratory analysis, we expect that the structure is:
+
+Weekly ARIMA: (2, 1, 1) (1-3, 0, 1-3) [52]
+
+Monthly ARIMA: (0-2, 1, 0-2) (0-1, 0, 2) [12]
+
+Initially we use an automated function `auto.arima` to determine the model structure. This will run very slowly if all models are tested. In the current study, the models were initially run with stepwise = T, and the same models were defined as when auto.arima was run without this argument. Therefore, we exclude stepwise = T from this code simpler to increase computational speed.
+
+We then fit other plausible models based on the exploratory analysis. We select the final model based on lowest AIC.
+
+
+```{r}
+Auto_Arima = auto.arima(Parvo_ts_data)
+summary(Auto_Arima)
+plot(forecast(Auto_Arima, 100))
+confint(Auto_Arima) 
+checkresiduals(Auto_Arima)
+```
+
+The automated function has slected a model with structure ARIMA(3,1,1)(1,0,0)[52] with drift. The drift term creates a trend in the forecast time-series.
+
+```{r}
+Auto_ArimaM = auto.arima(Parvo_ts_dataM)
+summary(Auto_ArimaM)
+plot(forecast(Auto_ArimaM,24))
+confint(Auto_ArimaM) 
+checkresiduals(Auto_ArimaM)
+```
+
+
+The automated functions suggest:
+
+Weekly ARIMA (3,1,1)(1,0,0)[52] with drift, AICc=1834.24
+
+Monthly ARIMA (2,1,1)(2,0,0)[12], AICc=632.61
+
+We test other, simpler model structures which are still within the estimated parameters from time series exploration:
+
+```{r}
+### Weekly time series models
+## Weekly ARIMA: (2, 1, 1) (1-3, 0, 1-3) [52]
+## fitted: (3,1,1)(1,0,0)[52] with drift, AICc=1834.24
+
+fit1 = Arima(Parvo_ts_data, order = c(2, 1, 1), seasonal = c(1, 0, 0))
+summary(fit1)
+plot(forecast(fit1,100))
+confint(fit1) 
+checkresiduals(fit1)
+
+fit2 = Arima(Parvo_ts_data, order = c(2, 1, 1), seasonal = c(0, 0, 1))
+summary(fit2)
+plot(forecast(fit2,100))
+confint(fit2) 
+checkresiduals(fit2)
+
+fit3 = Arima(Parvo_ts_data, order = c(2, 1, 1), seasonal = c(1, 0, 0), include.drift = T)  # *** This model is the best weekly model
+summary(fit3)
+plot(forecast(fit3,100))
+confint(fit3) 
+checkresiduals(fit3)
+
+### monthly time series models
+## Monthly ARIMA: (0-2, 1, 0-2) (0-1, 0, 2) [12]
+## Auto fitted: (2,1,1)(2,0,0)[12], AICc=632.61
+
+fit4 = Arima(Parvo_ts_dataM, order = c(1, 1, 1), seasonal = c(1, 0, 0))
+summary(fit4)
+plot(forecast(fit4, 24))
+confint(fit4) 
+checkresiduals(fit4)
+
+fit5 = Arima(Parvo_ts_dataM, order = c(2, 1, 1), seasonal = c(0, 0, 1))
+summary(fit5)
+plot(forecast(fit5, 24))
+confint(fit5) 
+checkresiduals(fit5)
+
+fit6 = Arima(Parvo_ts_dataM, order = c(2, 1, 1), seasonal = c(2, 0, 0), include.drift = T)
+summary(fit6)
+plot(forecast(fit6, 24))
+confint(fit6) 
+checkresiduals(fit6)
+
+fit7 = Arima(Parvo_ts_dataM, order = c(1, 1, 0), seasonal = c(1, 0, 0))
+summary(fit7)
+plot(forecast(fit7, 24))
+confint(fit7) 
+checkresiduals(fit7)
+
+```
+
+
+The final models are 'fit3' for the weekly time-series and the auto-fitted model for the monthly time-series.
+Each has the lowest AICc of tested models, and produces a plausible forecast of the original time series. The residuals are reasonably Normaly distributed and the ACF plot of the residuals and Ljung-Box tests suggest that the residuals are time independent.
+
+
+# Multivariate forecasting with time-series
+In this section, we first consider how to modify an ARIMA model to include a predictor (other than the univariate time-series). We use the example of rainfall as a predictor of parvovirus events, and select monthly rainfall at Mudgee, NSW (mean centre of parvovirus event data).
+
+
+1. Prepare, describe and decompose the rainfall series.
+
+```{r}
+dataSource_Rain = getURL("https://raw.githubusercontent.com/vbrookes/Timeseries_analysis/master/Mudgee_Monthly_rainfall.csv")
+RainfallM = read.csv(text = dataSource_Rain, header = T)
+summary(RainfallM)
+str(RainfallM)
+head(RainfallM)
+tail(RainfallM)
+
+RainfallM$Date = as.character(RainfallM$Date, format = "%d/%m/%Y")
+RainfallM$Date = as.Date(RainfallM$Date, "%d/%m/%Y")
+
+RainfallM$byMonth = cut(RainfallM$Date, breaks="1 month") 
+RainfallM$byMonth <-  as.Date(RainfallM$byMonth, format = "%Y-%m-%d")
+
+# summary
+summary(RainfallM)
+# check structure
+str(RainfallM)
+# Check length
+length(RainfallM$Dates)
+
+ggplot(RainfallM, aes(x = byMonth, y = Rain_mm, group = 1)) +
+  geom_bar(stat="identity", width = 0.5, colour = "black") +
+  stat_smooth(aes(y = Rain_mm), method='auto', level=0.95) + 
+  themeVB +
+  scale_x_date() +
+  xlab("Year") +
+  ylab("Rainfall") 
+
+
+Rainfall_ts_data <- ts(RainfallM$Rain_mm, start = c(2009, 10), frequency =12)
+
+Decompose_tsRainM <- decompose(Rainfall_ts_data)
+summary(Decompose_tsRainM)
+plot(Decompose_tsRainM)
+
+```
+
+
+Quantitatively assess the trend, seasonality and stationarity of the data.
+
+```{r}
+# Assess trend and seasonality
+fit_Rain_dataM = lm(Rainfall_ts_data ~ time(Rainfall_ts_data) + factor(cycle(Rainfall_ts_data)))
+summary(fit_Rain_dataM)
+confint(fit_Rain_dataM)
+
+# Tests for stationarity
+Rainfall_ts_data %>% ggtsdisplay(theme = themeVB)
+
+# We  run `ndiffs` and `nsdiffs` (seasonal) from the `forecast` package to assess how many first differences are needed to induce stationarity.
+ndiffs(Rainfall_ts_data)
+nsdiffs(Rainfall_ts_data)
+
+## Monthly time-series tests for stationarity
+# 1. 
+Box.test(Rainfall_ts_data, lag = 12, type="Ljung-Box") 
+
+# 2.
+adf.test(Rainfall_ts_data, alternative = "stationary", k = 24) 
+
+# 3.
+kpss.test(Rainfall_ts_data, null = 'Trend') 
+kpss.test(Rainfall_ts_data, null = 'Level') 
+
+```
+
+There is no quantitative evidence for trend and seasonality of monthly rainfall in Mudgee. Also, the raw time-series appears to be stationary; significant correlations appear at lag 15, but not in the first few lags, the functions 'ndiff' and 'nsdiff' indicate that differencing is not required, and statistical tests indicate stationarity.
+
+3. We can therefore, use the raw rainfall series in the model.
+
+```{r}
+fit <- auto.arima(Parvo_ts_dataM, xreg=Rainfall_ts_data)
+summary(fit)
+confint(fit)
+checkresiduals(fit)
+
+fcast <- forecast(fit, xreg=rep(mean(Rainfall_ts_data),24))
+
+autoplot(fcast) + xlab("Year") + ylab("Events")
+```
+
+A increase in rainfall is associated with a decrease in parvo events, and vice versa. This model has a lower AICc (628.53) than the model without rainfall as a predictor (AICc = 632.61). The forecast plot results in a slightly narrower range of predictions over time than the model without rainfall as a predictor.
+
+### Vector auto-regression (VAR) models
+In these models, there no assumptions about the direction of prediction and the potential influence of one time-series on the other is symmetrical. Therefore, parvo events could predict rainfall, or rainfall could predict parvo events. Obviously, this is a ridiculous suggestion in this context, but it can be useful to give insights in other contexts. Examples could include exploration of the direction of disease spread between two populations (we want to explore causation). It is also useful for forecasting when we simply want a mathematically useful predictive model (we have made a prior causal model and are interested in predictions in one direction).
+
+Initially we examine the correlation between lags of monthly parvo reports and rainfall using cross-correlation plots.
+
+```{r}
+ccf(Parvo_ts_dataM, Rainfall_ts_data, type = 'correlation')
+```
+There appears to be cross-correlation between parvo events and rainfall at +2 months (rainfall leads parvo events on this side of the plot... which is also biologically sensible :-)).
+
+The model we are going to fit is a VAR model (no I or MA), so data need to be differenced to induce stationarity if necessary prior to model fitting. A predictive equation is fitted for each parvo events and rainfall. The equations are symmetrical (same number of predictor variables and lags).
+
+```{r}
+# Difference Parvo data because model is VARMA (no I)
+ParvoM_diff = diff(Parvo_ts_dataM)
+
+Differenced_data <- cbind(ParvoM_diff, Rainfall_ts_data) # Combine in a dataframe with the rainfall data.
+Differenced_data[is.na(Differenced_data)] <- 0 # Convert first value from NA to 0
+```
+
+In our example, we have two variables (parvo events and rainfall, k = 2). We need to determine the number of AR lags (p) for each equation in the model. We use the `VARselect` function to estimate the p order in the model.
+
+The output gives:
+1. AIC - For VAR models, we the BIC (SC) is preferable, because AIC tends to select large numbers of lags.
+2. HQ - Hannan-Quinn criterion
+3. SC - another name for the BIC (SC stands for Schwarz Criterion, after Gideon Schwarz who proposed it)
+4. FPE - "Final Prediction Error" criterion.
+
+The number of coefficients estimated in a VAR  = k+pk^2^. Note that because every variable is assumed to influence every other variable in the system, it makes a direct interpretation of the estimated coefficients difficult. 
+
+```{r}
+# estimate orders for AR(p) and MA(q) between parvo events and rainfall
+library(vars)
+VARselect(Differenced_data, lag.max = 12, type = "const") # AR(p) = 1 if use SC (BIC), or p = 4 if use the other information criteria.
+
+# Automated model fit
+Mod1 <- VAR(Differenced_data, p=1, type = "const") # automated
+Mod1
+summary(Mod1)
+serial.test(Mod1, lags.pt=12)
+
+Mod2 <- VAR(Differenced_data, p=4, type = "const") # automated
+Mod2
+summary(Mod2)
+serial.test(Mod2, lags.pt=12)
+
+# we plot forecasts from each predictive equation
+forecast(Mod1) %>%
+  autoplot() + xlab("Year")
+
+forecast(Mod2) %>%
+  autoplot() + xlab("Year")
+```
+
+In the model with p = 1, there are three coefficients estimated for each equation (1 lag each for rainfall and parvo events as predictors of parvo events [and rainfall events], and 1 constant). In this model, none of the coeffcients for the parvo events equation are significantly predictive and in the Portmanteau test, P = 0.05 (rejecting the null hypothesis of no correlation between residuals).
+
+In the model with p = 4, there are 18 coefficients (9 for each equation). There are significant predictors of parvo events (previous parvo events and rainfall at lags 2, 3 and 4). In the Portmanteau test, P = 0.58 (consistent with the null hypothesis of no correlation between residuals).
+
+We would select the model with p = 4 as more useful for prediction of parvo events. In this case, we have no interest in prediction of rainfall, but this predictive equation would also be of interest if a plausible causal relationship was agreed 'a priori'.
+
+For further information about vector auto-regressive models and other extensions of time-series analysis and forecasting, we recommend:
+
+Hyndman, R.J., & Athanasopoulos, G. (2018) Forecasting: principles and practice, 2nd edition, OTexts: Melbourne, Australia. OTexts.com/fpp2. Accessed on 24/10/2019.
+
+An online copy of this book can be found [here](https://otexts.com/fpp2/).
+
