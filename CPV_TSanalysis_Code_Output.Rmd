@@ -1,5 +1,5 @@
 ---
-title: "Demostration code: Parvovirus time-series analysis in R"
+title: "Demonstration code: Parvovirus time-series analysis in R"
 author: 'V Brookes, M Ward, R Iglesias'
 date: "24 October 2019"
 output:
