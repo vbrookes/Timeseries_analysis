@@ -715,17 +715,34 @@ There is no quantitative evidence for trend and seasonality of monthly rainfall 
 ```{r}
 # Chunk 25 ----
 
-fit <- auto.arima(Parvo_ts_dataM, xreg=Rainfall_ts_data)
+# Make a matrix of lagged predictors (0, 1, 2 or 3 lags).
+RainLag <- cbind(
+    AdLag0 = Rainfall_ts_data,
+    AdLag1 = stats::lag(Rainfall_ts_data, k = 1),
+    AdLag2 = stats::lag(Rainfall_ts_data, k = 2),
+    AdLag3 = stats::lag(Rainfall_ts_data, k = 3)) %>%
+  head(NROW(Rainfall_ts_data))
+
+# Restrict data so models use same fitting period
+fit1 <- auto.arima(Parvo_ts_dataM[4:70], xreg=RainLag[4:70,1])
+fit2 <- auto.arima(Parvo_ts_dataM[4:70], xreg=RainLag[4:70,1:2])
+fit3 <- auto.arima(Parvo_ts_dataM[4:70], xreg=RainLag[4:70,1:3])
+fit4 <- auto.arima(Parvo_ts_dataM[4:70], xreg=RainLag[4:70,1:4])
+
+c(fit1[["aicc"]],fit2[["aicc"]],fit3[["aicc"]],fit4[["aicc"]])
+
+fit <- auto.arima(Parvo_ts_dataM, xreg=RainLag[,1:3])
 summary(fit)
 confint(fit)
 checkresiduals(fit)
 
-fcast <- forecast(fit, xreg=rep(mean(Rainfall_ts_data),24))
-
+# forecast is fitted with trimmed data otherwise error message: 'Upper prediction intervals are not finite.' due to NAs in lagged rainfall data.
+fcast <- forecast(fit3, h = 20, xreg=RainLag[4:70,1:3])
+    
 autoplot(fcast) + xlab("Year") + ylab("Events")
 ```
 
-A increase in rainfall is associated with a decrease in parvo events, and vice versa. This model has a lower AICc (628.53) than the model without rainfall as a predictor (AICc = 632.61). The forecast plot results in a slightly narrower range of predictions over time than the model without rainfall as a predictor.
+An increase in rainfall in the previous 2 months is associated with an increase in parvo events. This model has a lower AICc (610.07) than the model without rainfall as a predictor (AICc = 632.61). The forecast plot confidence intervals are still very wide.
 
 ### Vector auto-regression (VAR) models
 In these models, there no assumptions about the direction of prediction and the potential influence of one time-series on the other is symmetrical. Therefore, parvo events could predict rainfall, or rainfall could predict parvo events. Obviously, this is a ridiculous suggestion in this context, but it can be useful to give insights in other contexts. Examples could include exploration of the direction of disease spread between two populations (we want to explore causation). It is also useful for forecasting when we simply want a mathematically useful predictive model (we have made a prior causal model and are interested in predictions in one direction).
