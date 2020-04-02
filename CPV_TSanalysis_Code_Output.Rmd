@@ -16,6 +16,8 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+# Chunk 1 ----
+
 knitr::opts_chunk$set(echo = TRUE)
 
 pagebreak <- function() {
@@ -37,6 +39,8 @@ First, load the required packages (libraries).
 To manipulate and plot the data:
 
 ```{r wrap-hook, messages = FALSE}
+# Chunk 2 ----
+
 library(ggplot2)
 library(plyr)
 library(dplyr)
@@ -46,6 +50,8 @@ library(lubridate)
 To conduct time-series analyses and read the data from github:
 
 ```{r}
+# Chunk 3 ----
+
 library(tseries)
 library(vars)
 library(forecast)
@@ -55,6 +61,8 @@ library(RCurl)
 Now load the parvo dataset, and inspect it using the `summary`, `str`, `head` and `tail` functions:
 
 ```{r}
+# Chunk 4 ----
+
 dataSource_CPV = getURL("https://raw.githubusercontent.com/vbrookes/Timeseries_analysis/master/Parvo_TS_clean.csv")
 ParvoD <- read.csv(text = dataSource_CPV, header = T)
 summary(ParvoD)
@@ -67,6 +75,8 @@ tail(ParvoD)
 Check for duplicated or missing data:
 
 ```{r}
+# Chunk 5 ----
+
 ## Duplication
 which(duplicated(ParvoD))  # anyDuplicated() does the same thing 
 AllCompleteData = unique(ParvoD) # Can check that the dataset is the same length
@@ -88,6 +98,8 @@ Note that the column 'Case.Date' is a factor.
 Convert it to date format, and find the minumum and maximum dates in the dataset. Also, add columns for week and month for aggregation purposes later in analysis:
 
 ```{r}
+# Chunk 6 ----
+
 length(ParvoD$complete) # total events
 str(ParvoD)
 
@@ -113,6 +125,8 @@ max(ParvoD$Date, na.rm = T)
 Summarise dataset by week and month, using `ddply` from the `plyr` package:
 
 ```{r}
+# Chunk 7 ----
+
 #### Aggregate data by week
 ParvoW = ddply(ParvoD, c("byWeek"), summarise,
                      Cases = sum(Cases),
@@ -133,6 +147,8 @@ summary(ParvoM)
 Now create a dummy time-series of weeks based on these time periods and merge with the time-series. This identifies weeks (or months) with no cases. Note that some time-series have many zero values at the time points.
 
 ```{r}
+# Chunk 8 ----
+
 # Create time sequence with 1 week intervals
 data.length <- length(ParvoW$byWeek)
 min.date = min(ParvoW$byWeek)
@@ -162,6 +178,8 @@ length(ParvoW$Events) # Note that in this dataset, there must be 2 weeks with 0 
 We can also create a monthly times-series.
 
 ```{r}
+# Chunk 9 ----
+
 # Create time sequence with 1 month intervals
 data.lengthM <- length(ParvoM$byMonth)
 min.dateM = min(ParvoM$byMonth)
@@ -200,6 +218,8 @@ Here, we use `ggplot`.
 The following code is used to make the plots attractive and is a useful 'publication-ready' theme:
 
 ```{r}
+# Chunk 10 ----
+
 themeVB = theme(axis.text.x = element_text(colour = "black", angle = 90, hjust=1,vjust=0.5, size = 11), 
                 axis.line = element_line(colour = "black"), 
                 axis.text.y = element_text(colour = "black"),
@@ -218,6 +238,8 @@ The blue line is the smoothed number of cases with a shaded 95% confidence inter
 There seems to be an overall decreasing trend in the number of weekly reported cases. Seasonality is also possible but difficult to determine using this plot.
 
 ```{r}
+# Chunk 11 ----
+
 ggplot(ParvoW, aes(x = byWeek, y = Events, group = 1)) +
   geom_bar(stat="identity", width = 0.5, colour = "black") +
   stat_smooth(aes(y = Events), method='auto', level=0.95) + 
@@ -245,6 +267,8 @@ Here, we use the `ts` function from the stats package.
 
 
 ```{r}
+# Chunk 12 ----
+
 Parvo_ts_data <- ts(ParvoW$Events, start = c(2009, 40), frequency =52)
 
 Parvo_ts_dataM <- ts(ParvoM$Events, start = c(2009, 10), frequency =12)
@@ -259,6 +283,8 @@ We can quantify this trend using linear regression with predictor variables for 
 The weekly change in the number of cases is -1.22 events/week/year (95% CI -1.57 - -0.87), confirming that the long-term trend is decreasing reported cases.
 
 ```{r}
+# Chunk 13 ----
+
 # Weekly ts dataset
 fit_Parvo_data = ts_all_model <- lm(Parvo_ts_data ~ time(Parvo_ts_data) + factor(cycle(Parvo_ts_data)))
 summary(fit_Parvo_data)
@@ -288,6 +314,8 @@ Random (remainder) - unexplainable part of the data.
 
 
 ```{r}
+# Chunk 14 ----
+
 # Weekly ts dataset
 Decompose_ts <- decompose(Parvo_ts_data)
 summary(Decompose_ts)
@@ -319,6 +347,8 @@ ggplot(ParvoW, aes(y=Events, x = Year)) + geom_boxplot(aes(group=Year), fill = '
 Given the apparent seasonality in both the weekly and monthly time-series, it is interesting to visually compare the two seasonal plots from the 'decomposed' data.
 
 ```{r}
+# Chunk 15 ----
+
 ### Compare the seasonality plots
 
 plot(Decompose_tsM$seasonal) 
@@ -375,6 +405,8 @@ We then run `ndiffs` from the `forecast` package to assess how many first differ
 
 
 ```{r}
+# Chunk 16 ----
+
 ## Tests for stationarity
 # Weekly data
 Parvo_ts_data %>% ggtsdisplay(theme = themeVB)
@@ -403,6 +435,8 @@ Frequently used tests include:
 3. Kwiatkowski-Phillips-Schmidt-Shin (KPSS) for level or trend stationarity (null hypothesis is that the time-series is stationary).
 
 ```{r}
+# Chunk 17 ----
+
 ## Weekly time-series tests for stationarity
 # 1. 
 Box.test(Parvo_ts_data, lag = 52, type="Ljung-Box") 
@@ -431,6 +465,8 @@ kpss.test(Parvo_ts_dataM, null = 'Level') # The null hypothesis is that the seri
 We difference the time-series, then test for stationarity again.
 
 ```{r}
+# Chunk 18 ----
+
 ## Weekly time-series tests for stationarity
 # 1. 
 Box.test(diff(Parvo_ts_data), lag=52, type="Ljung-Box") 
@@ -462,6 +498,8 @@ From our tests of stationarity, we know that 'd' in the non-seasonal part of the
 We now use the ACF and PACF plots of the differenced data to estimate the p and q values in the non-seasonal section of the ARIMA model.
 
 ```{r}
+# Chunk 19 ----
+
 ## Examine ACF and PACF plots of differenced time-series again to estimate p, P, q and Q.
 # Weekly data
 Parvo_ts_data %>% diff() %>% ggtsdisplay(theme = themeVB) # Assess differenced ts and ACF and PACF plots.
@@ -503,6 +541,8 @@ We then fit other plausible models based on the exploratory analysis. We select 
 
 
 ```{r}
+# Chunk 20 ----
+
 Auto_Arima = auto.arima(Parvo_ts_data)
 summary(Auto_Arima)
 plot(forecast(Auto_Arima, 100))
@@ -513,6 +553,8 @@ checkresiduals(Auto_Arima)
 The automated function has slected a model with structure ARIMA(3,1,1)(1,0,0)[52] with drift. The drift term creates a trend in the forecast time-series.
 
 ```{r}
+# Chunk 21 ----
+
 Auto_ArimaM = auto.arima(Parvo_ts_dataM)
 summary(Auto_ArimaM)
 plot(forecast(Auto_ArimaM,24))
@@ -530,6 +572,8 @@ Monthly ARIMA (2,1,1)(2,0,0)[12], AICc=632.61
 We test other, simpler model structures which are still within the estimated parameters from time series exploration:
 
 ```{r}
+# Chunk 22 ----
+
 ### Weekly time series models
 ## Weekly ARIMA: (2, 1, 1) (1-3, 0, 1-3) [52]
 ## fitted: (3,1,1)(1,0,0)[52] with drift, AICc=1834.24
@@ -594,6 +638,8 @@ In this section, we first consider how to modify an ARIMA model to include a pre
 1. Prepare, describe and decompose the rainfall series.
 
 ```{r}
+# Chunk 23 ----
+
 dataSource_Rain = getURL("https://raw.githubusercontent.com/vbrookes/Timeseries_analysis/master/Mudgee_Monthly_rainfall.csv")
 RainfallM = read.csv(text = dataSource_Rain, header = T)
 summary(RainfallM)
@@ -635,6 +681,8 @@ plot(Decompose_tsRainM)
 Quantitatively assess the trend, seasonality and stationarity of the data.
 
 ```{r}
+# Chunk 24 ----
+
 # Assess trend and seasonality
 fit_Rain_dataM = lm(Rainfall_ts_data ~ time(Rainfall_ts_data) + factor(cycle(Rainfall_ts_data)))
 summary(fit_Rain_dataM)
@@ -665,6 +713,8 @@ There is no quantitative evidence for trend and seasonality of monthly rainfall 
 3. We can therefore, use the raw rainfall series in the model.
 
 ```{r}
+# Chunk 25 ----
+
 fit <- auto.arima(Parvo_ts_dataM, xreg=Rainfall_ts_data)
 summary(fit)
 confint(fit)
@@ -683,6 +733,8 @@ In these models, there no assumptions about the direction of prediction and the 
 Initially we examine the correlation between lags of monthly parvo reports and rainfall using cross-correlation plots.
 
 ```{r}
+# Chunk 26 ----
+
 ccf(Parvo_ts_dataM, Rainfall_ts_data, type = 'correlation')
 ```
 There appears to be cross-correlation between parvo events and rainfall at +2 months (rainfall leads parvo events on this side of the plot... which is also biologically sensible :-)).
@@ -690,6 +742,8 @@ There appears to be cross-correlation between parvo events and rainfall at +2 mo
 The model we are going to fit is a VAR model (no I or MA), so data need to be differenced to induce stationarity if necessary prior to model fitting. A predictive equation is fitted for each parvo events and rainfall. The equations are symmetrical (same number of predictor variables and lags).
 
 ```{r}
+# Chunk 27 ----
+
 # Difference Parvo data because model is VARMA (no I)
 ParvoM_diff = diff(Parvo_ts_dataM)
 
@@ -708,6 +762,8 @@ The output gives:
 The number of coefficients estimated in a VAR  = k+pk^2^. Note that because every variable is assumed to influence every other variable in the system, it makes a direct interpretation of the estimated coefficients difficult. 
 
 ```{r}
+# Chunk 28 ----
+
 # estimate orders for AR(p) and MA(q) between parvo events and rainfall
 library(vars)
 VARselect(Differenced_data, lag.max = 12, type = "const") # AR(p) = 1 if use SC (BIC), or p = 4 if use the other information criteria.
