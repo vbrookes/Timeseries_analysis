@@ -1,6 +1,6 @@
 # Timeseries_analysis
 
-This repository contains the datasets and code described in the article, 'Time-series analysis applications in veterinary science' submitted to Frontiers in Veterinary Science: Epidemiology and Economics in November 2019, by the following authors:
+This repository contains the datasets and code described in the article, 'Autoregressive models applied to time-series data in veterinary science' in Frontiers in Veterinary Science: Epidemiology and Economics, doi: 10.3389/fvets.2020.00604, by the following authors:
 
 Michael P Ward 1, Rachel Iglesias 2, Victoria Brookes 3, 4
 
